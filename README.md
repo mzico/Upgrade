@@ -1,10 +1,10 @@
 Progress tracking:
-Adding a modified python upgrade script
 
-Main changes so far (comparing to original):
-1. Added explicit Flex FQDN specification via commadline argument, to not rely on auto-detection (created an issue in my test environment once)
-2. Lines to push into changes to roles / scopes / permissions model (imports data taken from a reference Flex 6.0 db "as is", so it contains inums that may collide with inums existing in target db; may need to improve that part with proper inum generation)
-3. Lines to find all users with old "api-admin" role and change the role to new "admin" role - to ensure access to admin UI post-upgrade
+1. Adding a modified python upgrade script
+2. Main changes to the script so far (comparing to original):
+  - Added explicit Flex FQDN specification via commadline argument, to not rely on auto-detection (created an issue in my test environment once)
+  - Lines to push into changes to roles / scopes / permissions model (imports data taken from a reference Flex 6.0 db "as is", so it contains inums that may collide with inums existing in target db; may need to improve that part with proper inum generation)
+  - Lines to find all users with old "api-admin" role and change the role to new "admin" role - to ensure access to admin UI post-upgrade
 
 To-do list:
 1. Currently schema update is conducted as a separate step, importing schema path file into db directly. Is it worth to move that part into the script as well?
