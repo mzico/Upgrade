@@ -13,7 +13,7 @@
 6. Custom branding for Casa (logo+icon) migrates too
 
 ### To-do list:
-1. Currently schema update is conducted as a separate step, importing schema path file into db directly. Perhaps move it into the script as well later?
+1. Currently schema update is conducted as a separate step, importing schema patch file into db directly. Perhaps move it into the script as well later?
 2. ~Need to extend user migration routine and make sure standard roles existing in an older Flex instance will keep admin UI access if they had it prior to upgrade~ This seems like more and more disproportionally complex and unreasonable task, as it's hard to correctly distinguish which old custom roles (if created by user) should have access to what in updated access control model. "admin" role is already ensured access to admin UI, and then will allow users to define a new system of roles, compatible with the new model. One relatively easy solution though is to recreated our standard old roles in the new system as close as possible, then push then into the default policy store we already modify in the script (on to-do list)
 
 ### Points of concern
