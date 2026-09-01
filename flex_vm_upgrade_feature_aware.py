@@ -119,6 +119,8 @@ DB_DRIVEN_OPTIONALS = {"jans-lock", "jans-kc"}
 
 CONFIG_API_JAVA_SECURITY_PROP = "-Djava.security.properties=./etc/jetty/security/java.security"
 
+CASA_EXTRA_CLIENT_SCOPE = "https://jans.io/oauth/config/agama.readonly"
+
 
 class UpgradeError(RuntimeError):
     pass
@@ -719,6 +721,11 @@ def migrate_policy_store(ctx: UpgradeContext) -> None:
     patch_policy_store_cjar(ctx, live_cjar)
     patch_policy_store_cjar(ctx, template_cjar)
 
+    run(
+        ["chown", "-R", "jetty:jetty", str(CONFIG_API_ADMINUI_POLICY_DIR.parent)],
+        dry_run=ctx.dry_run,
+    )
+
 
 def patch_admin_ui_db_config(ctx: UpgradeContext) -> None:
     if ctx.discovery is None:
@@ -820,6 +827,7 @@ def update_roles_model(ctx: UpgradeContext) -> None:
 
     db_name = ctx.discovery.install.persistence.db_name
 
+    log('Creating new admin UI session permissions..')
     permissions_sql = r'''UPDATE public."jansAppConf"
 SET "jansConfDyn" = jsonb_set(
     "jansConfDyn"::jsonb,
@@ -833,6 +841,57 @@ SET "jansConfDyn" = jsonb_set(
 WHERE "doc_id" = 'admin-ui';'''
     run(["sudo", "-u", "postgres", "psql", "-d", db_name, "-c", permissions_sql], dry_run=ctx.dry_run)
 
+    log('Adding new permissions mandatory to access admin UI to all non-admin legacy roles..')
+    # Granting the new mandatory permissions to every legacy non-admin role present in rolePermissionMapping that is supposed to access admin UI
+    # existing permissions are preserved, and a role that already holds one of these permissions is not given a duplicate
+    session_permissions_sql = r'''UPDATE public."jansAppConf"
+SET "jansConfDyn" = jsonb_set(
+    "jansConfDyn"::jsonb,
+    '{rolePermissionMapping}',
+    COALESCE(
+        (
+            SELECT jsonb_agg(
+                jsonb_set(
+                    mapping.value,
+                    '{permissions}',
+                    COALESCE(
+                        (
+                            SELECT jsonb_agg(merged.perm ORDER BY merged.ord)
+                            FROM (
+                                SELECT existing.perm, existing.ord
+                                FROM jsonb_array_elements_text(
+                                         COALESCE(mapping.value -> 'permissions', '[]'::jsonb)
+                                     ) WITH ORDINALITY AS existing(perm, ord)
+                                UNION ALL
+                                SELECT added.perm, 1000000 + added.ord
+                                FROM unnest(ARRAY[
+                                         'https://jans.io/oauth/jans-auth-server/config/adminui/user/session.readonly',
+                                         'https://jans.io/oauth/jans-auth-server/config/adminui/user/session.write',
+                                         'https://jans.io/oauth/jans-auth-server/config/adminui/user/session.delete',
+                                         'https://jans.io/oauth/jans-auth-server/config/adminui/license.readonly',
+                                         'https://jans.io/oauth/jans-auth-server/config/adminui/security.readonly',
+                                         'https://jans.io/oauth/config/data.readonly'
+                                     ]) WITH ORDINALITY AS added(perm, ord)
+                                WHERE NOT COALESCE(mapping.value -> 'permissions', '[]'::jsonb) ? added.perm
+                            ) AS merged
+                        ),
+                        '[]'::jsonb
+                    )
+                )
+                ORDER BY mapping.ord
+            )
+            FROM jsonb_array_elements("jansConfDyn"::jsonb -> 'rolePermissionMapping')
+                 WITH ORDINALITY AS mapping(value, ord)
+        ),
+        '[]'::jsonb
+    )
+)::text
+WHERE "doc_id" = 'admin-ui'
+  AND jsonb_typeof("jansConfDyn"::jsonb -> 'rolePermissionMapping') = 'array';'''
+    run(["sudo", "-u", "postgres", "psql", "-d", db_name, "-c", session_permissions_sql], dry_run=ctx.dry_run)
+
+    # Adding the default "admin" role existing in 6.0 package OOTB; pre-upgrade (old) roles are preserved
+    log('Adding a new default admin role and importing default set of permissions for it..')
     roles_sql = r'''UPDATE public."jansAppConf"
 SET "jansConfDyn" = jsonb_set(
     "jansConfDyn"::jsonb,
@@ -844,6 +903,7 @@ SET "jansConfDyn" = jsonb_set(
 WHERE "doc_id" = 'admin-ui';'''
     run(["sudo", "-u", "postgres", "psql", "-d", db_name, "-c", roles_sql], dry_run=ctx.dry_run)
 
+    # Importing default permissions/scopes for "admin" role  to ensure access to admin UI post-upgrade; mappings for pre-upgrade (old) roles are preserved
     role_permission_mapping_sql = r'''UPDATE public."jansAppConf"
 SET "jansConfDyn" = jsonb_set(
     "jansConfDyn"::jsonb,
@@ -894,6 +954,133 @@ def grant_adminUI_access(ctx: UpgradeContext) -> None:
         run(["sudo", "-u", "postgres", "psql", "-d", db_name, "-c", update_sql], dry_run=ctx.dry_run)
 
 
+def update_casa_client_scopes(ctx: UpgradeContext) -> None:
+    # Casa's OIDC client needs an additional scope in 6.0.0. Retrieves client's inum from casa's jansAppConf row
+    # then adds an extra scope
+
+    if ctx.discovery is None:
+        raise UpgradeError("Discovery report is not initialized")
+    if not ctx.discovery.services.get("jans-casa"):
+        log("Casa is not installed on this host; skipping Casa client scope update")
+        return
+
+    db_name = ctx.discovery.install.persistence.db_name
+
+    # Read-only lookups: always run, even under --dry-run, so we can report
+    # exactly which client would be modified.
+    log("Looking up Casa OIDC client's id/inum in jansAppConf..")
+    client_lookup_sql = (
+        'SELECT "jansConfApp"::jsonb -> \'oidc_config\' -> \'client\' ->> \'clientId\' '
+        'FROM public."jansAppConf" WHERE "doc_id" = \'casa\';'
+    )
+    result = run(
+        ["sudo", "-u", "postgres", "psql", "-X", "-d", db_name, "-t", "-A", "-c", client_lookup_sql],
+        dry_run=False,
+    )
+
+    stdout = getattr(result, "stdout", result) or ""
+    if isinstance(stdout, bytes):
+        stdout = stdout.decode("utf-8")
+    client_id = stdout.strip()
+
+    # An empty result covers all three failure modes: no 'casa' row, no
+    # clientId key, or a SQL NULL (rendered as an empty string by -t -A).
+    if not client_id:
+        msg = (
+            "Could not determine Casa clientId from jansAppConf (doc_id='casa'); "
+            "Casa client scopes were not updated"
+        )
+        log(f"WARNING: {msg}")
+        ctx.warnings.append(msg)
+        return
+
+    escaped_client_id = client_id.replace("'", "''")
+    log(f"Casa OIDC client id: {client_id}")
+
+    # Resolve the scope URN to its DN, which is what jansClnt.jansScope stores.
+    log(f'Finding out DN for scope "{CASA_EXTRA_CLIENT_SCOPE}"..')
+    escaped_scope_urn = CASA_EXTRA_CLIENT_SCOPE.replace("'", "''")
+    dn_lookup_sql = (
+        f'SELECT "dn" FROM public."jansScope" WHERE "jansId" = \'{escaped_scope_urn}\';'
+    )
+    dn_result = run(
+        ["sudo", "-u", "postgres", "psql", "-X", "-d", db_name, "-t", "-A", "-c", dn_lookup_sql],
+        dry_run=False,
+    )
+    dn_stdout = getattr(dn_result, "stdout", dn_result) or ""
+    if isinstance(dn_stdout, bytes):
+        dn_stdout = dn_stdout.decode("utf-8")
+    scope_dn = dn_stdout.strip()
+
+    if not scope_dn:
+        msg = (
+            f'No scope found in jansScope with jansId "{CASA_EXTRA_CLIENT_SCOPE}"; '
+            "Casa client scopes were not updated"
+        )
+        log(f"WARNING: {msg}")
+        ctx.warnings.append(msg)
+        return
+
+    escaped_scope_dn = scope_dn.replace("'", "''")
+    # Embedded in a JSON literal below, so quotes and backslashes need escaping too.
+    json_scope_dn = json.dumps(scope_dn)
+    log(f"DN for scope {CASA_EXTRA_CLIENT_SCOPE} is: {scope_dn}")
+
+    # COALESCE to the literal 'null' so an existing row with a NULL jansScope
+    # is distinguishable from a missing row.
+    scope_lookup_sql = (
+        'SELECT COALESCE("jansScope"::text, \'null\') '
+        f'FROM public."jansClnt" WHERE "inum" = \'{escaped_client_id}\';'
+    )
+    scope_result = run(
+        ["sudo", "-u", "postgres", "psql", "-X", "-d", db_name, "-t", "-A", "-c", scope_lookup_sql],
+        dry_run=False,
+    )
+    scope_stdout = getattr(scope_result, "stdout", scope_result) or ""
+    if isinstance(scope_stdout, bytes):
+        scope_stdout = scope_stdout.decode("utf-8")
+    raw_scopes = scope_stdout.strip()
+
+    if not raw_scopes:
+        msg = (
+            f"No jansClnt row found for Casa client's inum {client_id}; "
+            "Casa client scopes were not updated"
+        )
+        log(f"WARNING: {msg}")
+        ctx.warnings.append(msg)
+        return
+
+    try:
+        current_scopes = json.loads(raw_scopes)
+    except json.JSONDecodeError:
+        current_scopes = None
+
+    if isinstance(current_scopes, list) and scope_dn in current_scopes:
+        log(f'Casa client already has scope DN "{scope_dn}"; nothing to do')
+        return
+    if current_scopes is not None and not isinstance(current_scopes, list):
+        msg = (
+            f"jansScope for Casa client {client_id} is not a JSON array; "
+            "Casa client scopes were not updated"
+        )
+        log(f"WARNING: {msg}")
+        ctx.warnings.append(msg)
+        return
+
+    # Existing scopes are preserved; the guard clauses make the statement a no-op
+    # if the scope is already present or the column holds something other than an array.
+    log(f'Adding scope {CASA_EXTRA_CLIENT_SCOPE}\'s DN "{scope_dn}" to the list of Casa client\'s scopes..')
+    update_sql = (
+        'UPDATE public."jansClnt" '
+        'SET "jansScope" = COALESCE("jansScope", \'[]\'::jsonb) '
+        f'|| \'[{json_scope_dn}]\'::jsonb '
+        f'WHERE "inum" = \'{escaped_client_id}\' '
+        'AND jsonb_typeof(COALESCE("jansScope", \'[]\'::jsonb)) = \'array\' '
+        f'AND NOT COALESCE("jansScope", \'[]\'::jsonb) ? \'{escaped_scope_dn}\';'
+    )
+    run(["sudo", "-u", "postgres", "psql", "-X", "-d", db_name, "-c", update_sql], dry_run=ctx.dry_run)
+
+
 def migrate_database(ctx: UpgradeContext) -> None:
     section("Database migration")
     if ctx.skip_db:
@@ -907,6 +1094,7 @@ def migrate_database(ctx: UpgradeContext) -> None:
     # Update roles/scopes model and ensure admin access
     update_roles_model(ctx)
     grant_adminUI_access(ctx)
+    update_casa_client_scopes(ctx)
 
 
 def validate(ctx: UpgradeContext, artifact_plan: dict[str, list[tuple[Path, Path]]]) -> None:
@@ -1006,4 +1194,3 @@ def main(argv: list[str]) -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main(os.sys.argv[1:]))
-
