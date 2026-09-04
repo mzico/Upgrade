@@ -11,7 +11,7 @@
 4. Tested OIDC flows post-upgrade succesfully
 5. All three configured Casa plugins (account linking, email otp, OTP token) seem to survive migration now, and function properly after
 6. Custom branding for Casa (logo+icon) migrates too
-7. (with lots of AI help) I've extended the upgrade script to do best-effort guessing of proper set of Cedar policies to emulate level of access old roles had in 5.6 system. Still far from ideal, and will reduce access to some features to read-only due to mapping ambiguities and security concerns. I don't see how we can do it better than this, at this moment.
+7. (with lots of AI help) I've extended the upgrade script to do best-effort guessing of proper set of Cedar policies to emulate level of access old roles had in 5.6 system. Still far from ideal, and will reduce access to some features to read-only due to mapping ambiguities and security concerns. I don't see how we can do it better than this, at this moment. It's still raw and requires additional testing, also debug output is on, so noisy.
 
 ### To-do list:
 1. Currently schema update is conducted as a separate step, importing schema patch file into db directly. Perhaps move it into the script as well later?
