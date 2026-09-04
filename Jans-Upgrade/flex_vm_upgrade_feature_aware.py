@@ -121,6 +121,177 @@ CONFIG_API_JAVA_SECURITY_PROP = "-Djava.security.properties=./etc/jetty/security
 
 CASA_EXTRA_CLIENT_SCOPE = "https://jans.io/oauth/config/agama.readonly"
 
+# ===========================================================================
+# Static data for roles' migration code //start
+# ===========================================================================
+
+# Roles that never get generated policies:
+#   "admin"     - created by update_roles_model() with a full permission set
+#   "api-admin" - legacy name, rewritten to "admin" by grant_adminUI_access()
+CEDAR_EXCLUDED_ROLES = ("admin", "api-admin")
+
+# Canonical ordering for rendered operations. Permission lists come out of the
+# DB in arbitrary order; sorting here makes the generated policy text stable
+# across runs, which the .cjar content comparison depends on.
+CEDAR_OPERATION_ORDER = ("read", "write", "delete")
+
+CEDAR_ACTION_TEMPLATE = 'GluuFlexAdminUI::Action::"{{operation}}"'
+
+CEDAR_POLICY_TEMPLATE = """@id("{{role}}{{feature_name}}")
+permit (
+  principal,
+  action in {{operation_s}},
+  resource in {{feature_urn}}
+)
+when {
+    context has tokens.gluuflexadminui_userinfo_token &&
+    context.tokens.gluuflexadminui_userinfo_token.hasTag("jansAdminUIRole") &&
+    context.tokens.gluuflexadminui_userinfo_token.getTag("jansAdminUIRole").contains("{{role}}")
+};
+"""
+
+# Admin UI permission -> (Cedar operation, Cedar feature URN).
+# Source: perms2features_map.txt, "Menu item" column dropped.
+PERMS_TO_CEDAR_DECISIONS: dict[str, tuple[str, str]] = {
+    "https://jans.io/oauth/config/attributes.readonly": ("read", 'GluuFlexAdminUIResources::Features::"Attributes"'),
+    "https://jans.io/oauth/config/attributes.write": ("write", 'GluuFlexAdminUIResources::Features::"Attributes"'),
+    "https://jans.io/oauth/config/attributes.delete": ("delete", 'GluuFlexAdminUIResources::Features::"Attributes"'),
+    "https://jans.io/oauth/config/scopes.readonly": ("read", 'GluuFlexAdminUIResources::Features::"Scopes"'),
+    "https://jans.io/oauth/config/scopes.write": ("write", 'GluuFlexAdminUIResources::Features::"Scopes"'),
+    "https://jans.io/oauth/config/scopes.delete": ("delete", 'GluuFlexAdminUIResources::Features::"Scopes"'),
+    "https://jans.io/oauth/config/scripts.readonly": ("read", 'GluuFlexAdminUIResources::Features::"Scripts"'),
+    "https://jans.io/oauth/config/scripts.write": ("write", 'GluuFlexAdminUIResources::Features::"Scripts"'),
+    "https://jans.io/oauth/config/scripts.delete": ("delete", 'GluuFlexAdminUIResources::Features::"Scripts"'),
+    "https://jans.io/oauth/config/openid/clients.readonly": ("read", 'GluuFlexAdminUIResources::Features::"Clients"'),
+    "https://jans.io/oauth/config/openid/clients.write": ("write", 'GluuFlexAdminUIResources::Features::"Clients"'),
+    "https://jans.io/oauth/config/openid/clients.delete": ("delete", 'GluuFlexAdminUIResources::Features::"Clients"'),
+    "https://jans.io/oauth/config/smtp.readonly": ("read", 'GluuFlexAdminUIResources::Features::"SMTP"'),
+    "https://jans.io/oauth/config/smtp.write": ("write", 'GluuFlexAdminUIResources::Features::"SMTP"'),
+    "https://jans.io/oauth/config/smtp.delete": ("delete", 'GluuFlexAdminUIResources::Features::"SMTP"'),
+    "https://jans.io/oauth/config/logging.readonly": ("read", 'GluuFlexAdminUIResources::Features::"Logging"'),
+    "https://jans.io/oauth/config/logging.write": ("write", 'GluuFlexAdminUIResources::Features::"Logging"'),
+    "https://jans.io/oauth/config/database/ldap.readonly": ("read", 'GluuFlexAdminUIResources::Features::"Persistence"'),
+    "https://jans.io/oauth/config/database/ldap.write": ("write", 'GluuFlexAdminUIResources::Features::"Persistence"'),
+    "https://jans.io/oauth/config/database/ldap.delete": ("delete", 'GluuFlexAdminUIResources::Features::"Persistence"'),
+    "https://jans.io/oauth/config/jwks.readonly": ("read", 'GluuFlexAdminUIResources::Features::"Keys"'),
+    "https://jans.io/oauth/jans-auth-server/config/adminui/user/role.readonly": ("read", 'GluuFlexAdminUIResources::Features::"Security"'),
+    "https://jans.io/oauth/jans-auth-server/config/adminui/user/role.write": ("write", 'GluuFlexAdminUIResources::Features::"Security"'),
+    "https://jans.io/oauth/jans-auth-server/config/adminui/user/role.delete": ("delete", 'GluuFlexAdminUIResources::Features::"Security"'),
+    "https://jans.io/oauth/jans-auth-server/config/adminui/user/permission.readonly": ("read", 'GluuFlexAdminUIResources::Features::"Security"'),
+    "https://jans.io/oauth/jans-auth-server/config/adminui/user/permission.write": ("write", 'GluuFlexAdminUIResources::Features::"Security"'),
+    "https://jans.io/oauth/jans-auth-server/config/adminui/user/permission.delete": ("delete", 'GluuFlexAdminUIResources::Features::"Security"'),
+    "https://jans.io/oauth/jans-auth-server/config/adminui/user/rolePermissionMapping.readonly": ("read", 'GluuFlexAdminUIResources::Features::"Security"'),
+    "https://jans.io/oauth/jans-auth-server/config/adminui/user/rolePermissionMapping.write": ("write", 'GluuFlexAdminUIResources::Features::"Security"'),
+    "https://jans.io/oauth/jans-auth-server/config/adminui/user/rolePermissionMapping.delete": ("delete", 'GluuFlexAdminUIResources::Features::"Security"'),
+    "https://jans.io/oauth/jans-auth-server/config/adminui/webhook.readonly": ("read", 'GluuFlexAdminUIResources::Features::"Webhooks"'),
+    "https://jans.io/oauth/jans-auth-server/config/adminui/webhook.write": ("write", 'GluuFlexAdminUIResources::Features::"Webhooks"'),
+    "https://jans.io/oauth/jans-auth-server/config/adminui/webhook.delete": ("delete", 'GluuFlexAdminUIResources::Features::"Webhooks"'),
+    "https://jans.io/oauth/config/acrs.readonly": ("read", 'GluuFlexAdminUIResources::Features::"Authentication"'),
+    "https://jans.io/oauth/config/acrs.write": ("write", 'GluuFlexAdminUIResources::Features::"Authentication"'),
+    "https://jans.io/oauth/config/acrs.delete": ("delete", 'GluuFlexAdminUIResources::Features::"Authentication"'),
+    "https://jans.io/oauth/jans-auth-server/config/adminui/license.readonly": ("read", 'GluuFlexAdminUIResources::Features::"License"'),
+    "https://jans.io/oauth/jans-auth-server/config/adminui/license.write": ("write", 'GluuFlexAdminUIResources::Features::"License"'),
+    "https://jans.io/oauth/jans-auth-server/config/adminui/license.delete": ("delete", 'GluuFlexAdminUIResources::Features::"License"'),
+    "https://jans.io/oauth/config/fido2.readonly": ("read", 'GluuFlexAdminUIResources::Features::"FIDO"'),
+    "https://jans.io/oauth/config/fido2.write": ("write", 'GluuFlexAdminUIResources::Features::"FIDO"'),
+    "https://jans.io/oauth/config/fido2.delete": ("delete", 'GluuFlexAdminUIResources::Features::"FIDO"'),
+    "https://jans.io/oauth/jans-auth-server/session.readonly": ("read", 'GluuFlexAdminUIResources::Features::"Session"'),
+    "https://jans.io/oauth/jans-auth-server/session.write": ("write", 'GluuFlexAdminUIResources::Features::"Session"'),
+    "https://jans.io/oauth/jans-auth-server/session.delete": ("delete", 'GluuFlexAdminUIResources::Features::"Session"'),
+    "https://jans.io/oauth/config/cache.readonly": ("read", 'GluuFlexAdminUIResources::Features::"Cache"'),
+    "https://jans.io/oauth/config/cache.write": ("write", 'GluuFlexAdminUIResources::Features::"Cache"'),
+    "https://jans.io/oauth/config/cache.delete": ("delete", 'GluuFlexAdminUIResources::Features::"Cache"'),
+    "https://jans.io/oauth/jans-auth-server/config/adminui/properties.readonly": ("read", 'GluuFlexAdminUIResources::Features::"Settings"'),
+    "https://jans.io/oauth/jans-auth-server/config/adminui/properties.write": ("write", 'GluuFlexAdminUIResources::Features::"Settings"'),
+    "https://jans.io/oauth/jans-auth-server/config/adminui/properties.delete": ("delete", 'GluuFlexAdminUIResources::Features::"Settings"'),
+    "https://jans.io/oauth/jans-auth-server/config/properties.readonly": ("read", 'GluuFlexAdminUIResources::Features::"AuthenticationServerConfiguration"'),
+    "https://jans.io/oauth/jans-auth-server/config/properties.write": ("write", 'GluuFlexAdminUIResources::Features::"AuthenticationServerConfiguration"'),
+    "https://jans.io/oauth/jans-auth-server/config/properties.delete": ("delete", 'GluuFlexAdminUIResources::Features::"AuthenticationServerConfiguration"'),
+    "https://jans.io/oauth/config/properties.readonly": ("read", 'GluuFlexAdminUIResources::Features::"ConfigApiConfiguration"'),
+    "https://jans.io/oauth/config/properties.write": ("write", 'GluuFlexAdminUIResources::Features::"ConfigApiConfiguration"'),
+    "https://jans.io/oauth/config/properties.delete": ("delete", 'GluuFlexAdminUIResources::Features::"ConfigApiConfiguration"'),
+    "https://jans.io/oauth/config/saml-config.readonly": ("read", 'GluuFlexAdminUIResources::Features::"SAML"'),
+    "https://jans.io/oauth/config/saml-config.write": ("write", 'GluuFlexAdminUIResources::Features::"SAML"'),
+    "https://jans.io/oauth/config/saml-config.delete": ("delete", 'GluuFlexAdminUIResources::Features::"SAML"'),
+    "https://jans.io/oauth/config/saml-scope.readonly": ("read", 'GluuFlexAdminUIResources::Features::"SAML"'),
+    "https://jans.io/oauth/config/saml-scope.write": ("write", 'GluuFlexAdminUIResources::Features::"SAML"'),
+    "https://jans.io/oauth/config/saml-scope.delete": ("delete", 'GluuFlexAdminUIResources::Features::"SAML"'),
+    "https://jans.io/auth/ssa.admin": ("read", 'GluuFlexAdminUIResources::Features::"SSA"'),
+    "https://jans.io/auth/ssa.portal": ("read", 'GluuFlexAdminUIResources::Features::"SSA"'),
+    "https://jans.io/auth/ssa.developer": ("read", 'GluuFlexAdminUIResources::Features::"SSA"'),
+    "https://jans.io/oauth/config/database/sql.readonly": ("read", 'GluuFlexAdminUIResources::Features::"Persistence"'),
+    "https://jans.io/oauth/config/database/sql.write": ("write", 'GluuFlexAdminUIResources::Features::"Persistence"'),
+    "https://jans.io/oauth/config/database/sql.delete": ("delete", 'GluuFlexAdminUIResources::Features::"Persistence"'),
+}
+
+DEFAULT_FEATURES: list[tuple[str, str]] = [
+    ("read", 'GluuFlexAdminUIResources::Features::"SCIM"'),
+    ("read", 'GluuFlexAdminUIResources::Features::"Lock"'),
+    ("read", 'GluuFlexAdminUIResources::ParentResource::"EssentialAdminUIScopes"'),
+    ("write", 'GluuFlexAdminUIResources::ParentResource::"EssentialAdminUIScopes"'),
+    ("delete", 'GluuFlexAdminUIResources::ParentResource::"EssentialAdminUIScopes"'),
+    ("read", 'GluuFlexAdminUIResources::Features::"License"'),
+    ("read", 'GluuFlexAdminUIResources::ParentResource::"SystemAndMonitoring"'),
+    ("read", 'GluuFlexAdminUIResources::Features::"Users"'),
+]
+
+# ===========================================================================
+# Static data for roles' migration code //end
+# ===========================================================================
+
+# ===========================================================================
+# Small generic helpers for roles' migration code //start
+# ===========================================================================
+
+def render_template(template: str, **values: str) -> str:
+    """
+    Substitute {{name}} placeholders. Uses plain replacement rather than
+    str.format()/f-strings so the literal { } of the Cedar `when { ... }` block
+    needs no escaping. Raises if any placeholder is left unresolved.
+    """
+    out = template
+    for key, value in values.items():
+        out = out.replace("{{" + key + "}}", value)
+    leftover = sorted(set(re.findall(r"\{\{[A-Za-z0-9_]+\}\}", out)))
+    if leftover:
+        raise UpgradeError(f"Unresolved template placeholders: {', '.join(leftover)}")
+    return out
+
+
+def psql_scalar(ctx: UpgradeContext, sql: str) -> str:
+    """
+    Run a read-only single-value query and return its stdout, whitespace-joined.
+    Always executed, even under --dry-run: reads change nothing and the values
+    are needed to report what the run would do.
+    """
+    db_name = ctx.discovery.install.persistence.db_name
+    result = run(
+        ["sudo", "-u", "postgres", "psql", "-X", "-d", db_name, "-t", "-A", "-c", sql],
+        dry_run=False,
+    )
+    stdout = getattr(result, "stdout", result) or ""
+    if isinstance(stdout, bytes):
+        stdout = stdout.decode("utf-8")
+    return "".join(stdout.splitlines()).strip()
+
+
+def sort_cedar_operations(operations: list[str]) -> list[str]:
+    order = {op: i for i, op in enumerate(CEDAR_OPERATION_ORDER)}
+    return sorted(operations, key=lambda op: (order.get(op, len(order)), op))
+
+
+def merge_feature_operation(
+    features_to_ops: dict[str, list[str]], feature: str, operation: str
+) -> None:
+    """Add operation under feature, creating the entry or de-duplicating in place."""
+    if feature not in features_to_ops:
+        features_to_ops[feature] = [operation]
+    elif operation not in features_to_ops[feature]:
+        features_to_ops[feature].append(operation)
+
+# ===========================================================================
+# Small generic helpers for roles' migration code //end
+# ===========================================================================
 
 class UpgradeError(RuntimeError):
     pass
@@ -763,6 +934,373 @@ WHERE dn='ou=admin-ui,ou=configuration,o=jans';'''
     run(["sudo", "-u", "postgres", "psql", "-d", db_name, "-c", sql], dry_run=ctx.dry_run)
 
 
+
+
+
+# !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+# !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+
+
+# ===========================================================================
+# I. Existing roles
+# ===========================================================================
+
+def fetch_existing_roles(ctx: UpgradeContext) -> list[str]:
+    sql = (
+        'SELECT "jansConfDyn"::jsonb -> \'roles\' '
+        'FROM public."jansAppConf" WHERE "doc_id" = \'admin-ui\';'
+    )
+    raw = psql_scalar(ctx, sql)
+    if not raw or raw == "null":
+        raise UpgradeError(
+            "Could not read 'roles' from jansAppConf (doc_id='admin-ui'); "
+            "cannot generate Cedar policies"
+        )
+    try:
+        roles_doc = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise UpgradeError(f"'roles' in jansAppConf is not valid JSON: {exc}") from exc
+    if not isinstance(roles_doc, list):
+        raise UpgradeError(
+            f"'roles' in jansAppConf is {type(roles_doc).__name__}, expected a JSON array"
+        )
+
+    existing_roles: list[str] = []
+    for entry in roles_doc:
+        if not isinstance(entry, dict):
+            continue
+        name = str(entry.get("role", "")).strip()
+        if not name:
+            continue
+        if name in CEDAR_EXCLUDED_ROLES:
+            log(f"  excluded role, skipping: {name}")
+            continue
+        if name not in existing_roles:
+            existing_roles.append(name)
+
+    log(f"existingRoles ({len(existing_roles)}): {existing_roles}")
+    return existing_roles
+
+
+# ===========================================================================
+# II. Role -> permissions
+# ===========================================================================
+
+def fetch_role_perms_mappings(
+    ctx: UpgradeContext, existing_roles: list[str]
+) -> dict[str, list[str]]:
+    sql = (
+        'SELECT "jansConfDyn"::jsonb -> \'rolePermissionMapping\' '
+        'FROM public."jansAppConf" WHERE "doc_id" = \'admin-ui\';'
+    )
+    raw = psql_scalar(ctx, sql)
+    if not raw or raw == "null":
+        raise UpgradeError(
+            "Could not read 'rolePermissionMapping' from jansAppConf (doc_id='admin-ui')"
+        )
+    try:
+        mapping_doc = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise UpgradeError(
+            f"'rolePermissionMapping' in jansAppConf is not valid JSON: {exc}"
+        ) from exc
+    if not isinstance(mapping_doc, list):
+        raise UpgradeError("'rolePermissionMapping' in jansAppConf is not a JSON array")
+
+    by_role: dict[str, list[str]] = {}
+    for entry in mapping_doc:
+        if not isinstance(entry, dict):
+            continue
+        name = str(entry.get("role", "")).strip()
+        if not name:
+            continue
+        perms = entry.get("permissions")
+        bucket = by_role.setdefault(name, [])
+        if isinstance(perms, list):
+            for perm in perms:
+                perm = str(perm).strip()
+                if perm and perm not in bucket:
+                    bucket.append(perm)
+
+    role_to_perms: dict[str, list[str]] = {}
+    for role in existing_roles:
+        if role not in by_role:
+            msg = f'Role "{role}" has no rolePermissionMapping entry; it will get no Cedar policies'
+            log(f"WARNING: {msg}")
+            ctx.warnings.append(msg)
+            role_to_perms[role] = []
+        else:
+            role_to_perms[role] = by_role[role]
+
+    log("roleToPermsMappings:")
+    for role, perms in role_to_perms.items():
+        log(f"  {role} ({len(perms)} permissions):")
+        for perm in perms:
+            log(f"    - {perm}")
+    return role_to_perms
+
+
+# ===========================================================================
+# V. Role -> {feature: [operations]}
+# ===========================================================================
+
+def build_role_to_cedar_decisions(
+    ctx: UpgradeContext, role_to_perms: dict[str, list[str]]
+) -> dict[str, dict[str, list[str]]]:
+    role_to_decisions: dict[str, dict[str, list[str]]] = {}
+
+    for role, permissions in role_to_perms.items():
+        # A fresh dict per role rather than one reused dict that gets .clear()ed:
+        # storing a reference and then clearing it would empty every entry
+        # already written into role_to_decisions.
+        cur_features_to_ops: dict[str, list[str]] = {}
+        unmapped: list[str] = []
+
+        for permission in permissions:
+            decision = PERMS_TO_CEDAR_DECISIONS.get(permission)
+            if decision is None:
+                unmapped.append(permission)
+                continue
+            operation, feature = decision
+            merge_feature_operation(cur_features_to_ops, feature, operation)
+
+        for operation, feature in DEFAULT_FEATURES:
+            merge_feature_operation(cur_features_to_ops, feature, operation)
+
+        for feature in cur_features_to_ops:
+            cur_features_to_ops[feature] = sort_cedar_operations(cur_features_to_ops[feature])
+
+        role_to_decisions[role] = cur_features_to_ops
+
+        if unmapped:
+            log(
+                f'  note: {len(unmapped)} permission(s) of role "{role}" have no feature '
+                f"mapping and were ignored:"
+            )
+            for permission in unmapped:
+                log(f"    - {permission}")
+
+    log("roleToCedarDecisionsMappings:")
+    for role, features in role_to_decisions.items():
+        log(f"  {role} ({len(features)} features):")
+        for feature in sorted(features):
+            log(f"    {feature} -> {features[feature]}")
+    return role_to_decisions
+
+
+# ===========================================================================
+# VI. Cedar policy sources
+# ===========================================================================
+
+def cedar_feature_name(feature_urn: str) -> str:
+    """Last '::'-delimited segment of the URN, stripped of its quotes."""
+    return feature_urn.split("::")[-1].strip().strip('"')
+
+
+def render_cedar_operations(operations: list[str]) -> str:
+    rendered = [render_template(CEDAR_ACTION_TEMPLATE, operation=op) for op in operations]
+    if len(rendered) == 1:
+        return rendered[0]
+    return "[" + ",\n  ".join(rendered) + "]"
+
+
+def generate_cedar_files_content(role_to_decisions: dict[str, dict[str, list[str]]]) -> dict[str, str]:
+    cedar_files: dict[str, str] = {}
+
+    for role in sorted(role_to_decisions):
+        for feature_urn in sorted(role_to_decisions[role]):
+            operations = role_to_decisions[role][feature_urn]
+            if not operations:
+                continue
+            feature_name = cedar_feature_name(feature_urn)
+            policy_id = f"{role}{feature_name}"
+            if policy_id in cedar_files:
+                raise UpgradeError(
+                    f"Duplicate Cedar policy id generated: {policy_id} "
+                    f"(role={role}, feature={feature_urn})"
+                )
+            cedar_files[policy_id] = render_template(
+                CEDAR_POLICY_TEMPLATE,
+                role=role,
+                feature_name=feature_name,
+                feature_urn=feature_urn,
+                operation_s=render_cedar_operations(operations),
+            )
+
+    log(f"cedarFilesDict ({len(cedar_files)} policies):")
+    for policy_id in cedar_files:
+        log(f"\n----- {policy_id}.cedar -----")
+        log(cedar_files[policy_id].rstrip("\n"))
+    return cedar_files
+
+
+# ===========================================================================
+# Orchestrator for .cedar policy generation code
+# ===========================================================================
+
+def generate_admin_ui_cedar_policies(ctx: UpgradeContext) -> dict[str, str]:
+    """Build {policy id: .cedar source text} for every non-admin legacy role."""
+    if ctx.discovery is None:
+        raise UpgradeError("Discovery report is not initialized")
+
+    section("Generating Admin UI Cedar policies")
+
+    log("Reading existing Admin UI roles from the database..")
+    existing_roles = fetch_existing_roles(ctx)
+    if not existing_roles:
+        log("No legacy roles to generate Cedar policies for; nothing to do")
+        return {}
+
+    log("\nReading role-to-permission mappings from the database..")
+    role_to_perms = fetch_role_perms_mappings(ctx, existing_roles)
+
+    log("\nResolving each role's permissions to Cedar features and operations..")
+    role_to_decisions = build_role_to_cedar_decisions(ctx, role_to_perms)
+
+    log("\nGenerating Cedar policy sources..")
+    return generate_cedar_files_content(role_to_decisions)
+
+
+# ===========================================================================
+# Function that actually updates live .cjar file on disk
+# ===========================================================================
+
+def push_cedar_policies_to_policy_store(ctx: UpgradeContext) -> None:
+    """
+    Generate Cedar policies for the legacy Admin UI roles and add them to the
+    live policy-store.cjar, then mirror the result onto the setup template copy.
+
+    Runs after migrate_policy_store(), which has already dropped a fresh 6.0.0
+    policy store into place and patched its trusted issuer.
+    """
+    if ctx.discovery is None:
+        raise UpgradeError("Discovery report is not initialized")
+
+    member_prefix = "policies/"
+    live_cjar = CONFIG_API_ADMINUI_POLICY_DIR / "policy-store.cjar"
+    template_cjar = FLEX_TEMPLATE_DIR / "policy-store.cjar"
+
+    # Purely read-only DB work, so it runs under --dry-run too and the preview
+    # lists the policies that would actually be produced on this host.
+    cedar_files = generate_admin_ui_cedar_policies(ctx)
+    if not cedar_files:
+        log("No Cedar policies were generated; policy store left untouched")
+        return
+
+    section("Adding generated Cedar policies to the policy store")
+
+    # {member name inside the archive: file content as bytes}
+    new_members = {
+        f"{member_prefix}{policy_id}.cedar": text.encode("utf-8")
+        for policy_id, text in cedar_files.items()
+    }
+
+    if ctx.dry_run:
+        print(f"DRY-RUN: add {len(new_members)} Cedar policies to {live_cjar}")
+        for name in sorted(new_members):
+            print(f"DRY-RUN:   + {name}")
+        print(f"DRY-RUN: mirror {live_cjar} -> {template_cjar}")
+        print(f"DRY-RUN: chown -R jetty:jetty {CONFIG_API_ADMINUI_POLICY_DIR.parent}")
+        return
+
+    ensure_exists(live_cjar)
+
+    # A member already present with identical content is skipped, so re-running
+    # the upgrader is a no-op; one present with different content is an error
+    # rather than a silent overwrite of a policy shipped in the 6.0.0 package.
+    with zipfile.ZipFile(live_cjar, "r") as zin:
+        existing = set(zin.namelist())
+        to_add: dict[str, bytes] = {}
+        for name, data in new_members.items():
+            if name not in existing:
+                to_add[name] = data
+            elif zin.read(name) == data:
+                log(f"  already present and identical, skipping: {name}")
+            else:
+                raise UpgradeError(
+                    f"{name} already exists in {live_cjar} with different content; "
+                    "refusing to overwrite"
+                )
+
+    if not to_add:
+        log("All generated Cedar policies are already present in the policy store")
+        return
+
+    # The archive is rebuilt member by member into a sibling temp file and then
+    # renamed over the original: mkstemp in the same directory keeps the final
+    # replace() an atomic, same-filesystem rename, so no reader ever sees a
+    # partially written policy store.
+    fd, tmp_name = tempfile.mkstemp(
+        prefix="policy-store-", suffix=".cjar", dir=str(live_cjar.parent)
+    )
+    os.close(fd)
+    tmp_path = Path(tmp_name)
+
+    try:
+        with zipfile.ZipFile(live_cjar, "r") as src_zip, \
+             zipfile.ZipFile(tmp_path, "w", compression=zipfile.ZIP_DEFLATED) as dst_zip:
+            # Existing members are copied through untouched, keeping their own
+            # ZipInfo (compression, timestamps, permission bits).
+            for item in src_zip.infolist():
+                dst_zip.writestr(
+                    item, b"" if item.is_dir() else src_zip.read(item.filename)
+                )
+
+            # New members need an explicit ZipInfo: passing a bare name to
+            # writestr() would leave external_attr at 0, i.e. mode 000 for
+            # anything that later extracts the archive to disk.
+            for name in sorted(to_add):
+                info = zipfile.ZipInfo(name, date_time=datetime.now().timetuple()[:6])
+                info.compress_type = zipfile.ZIP_DEFLATED
+                info.external_attr = 0o644 << 16
+                dst_zip.writestr(info, to_add[name])
+
+        # replace() swaps in a NEW inode, one that mkstemp created as root, so
+        # the previous jetty:jetty ownership does not carry over - and neither
+        # copystat() nor the rename can restore it. Ownership is therefore set
+        # on the temp file before the swap, so the archive is already correct
+        # at the instant it becomes visible under the live name.
+        shutil.copystat(live_cjar, tmp_path)
+        try:
+            shutil.chown(tmp_path, user="jetty", group="jetty")
+        except (LookupError, PermissionError) as exc:
+            raise UpgradeError(
+                f"Could not set jetty:jetty ownership on {tmp_path}: {exc}"
+            ) from exc
+        tmp_path.replace(live_cjar)
+    finally:
+        if tmp_path.exists():
+            tmp_path.unlink(missing_ok=True)
+
+    log(f"Added {len(to_add)} Cedar policies to {live_cjar}:")
+    for name in sorted(to_add):
+        log(f"  + {name}")
+
+    # The two copies are identical by construction - nothing above applies a
+    # host- or path-specific value to only one of them - so the finished live
+    # archive is mirrored rather than rebuilt a second time.
+    shutil.copy2(live_cjar, template_cjar)
+    log(f"Mirrored updated policy store: {live_cjar} -> {template_cjar}")
+
+    # Re-assert ownership across the Admin UI config tree: migrate_policy_store()
+    # ran its chown before this rewrite, so this restores the invariant for the
+    # replaced archive and anything else the rewrite touched.
+    run(
+        ["chown", "-R", "jetty:jetty", str(CONFIG_API_ADMINUI_POLICY_DIR.parent)],
+        dry_run=ctx.dry_run,
+    )
+
+# !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+# !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+
+
+
+
+
+
+
+
+
 def migrate_admin_ui(ctx: UpgradeContext) -> None:
     if ctx.discovery is None or not ctx.discovery.services.get("admin-ui"):
         return
@@ -792,6 +1330,11 @@ def migrate_admin_ui(ctx: UpgradeContext) -> None:
     regenerate_env_config(ctx)
     migrate_policy_store(ctx)
     patch_admin_ui_db_config(ctx)
+
+    # Migrate roles by best-effort guessing mappings between existing roles' permissions and Cedar policies
+    # necessary to access same or similar functionality in new Admin UI by generating a new set of Cedar policies
+    # then generating required .cedar policy files and pushing them into "live" and "template" .cjar policy store files
+    push_cedar_policies_to_policy_store(ctx)
 
 
 def patch_server_ini(ctx: UpgradeContext) -> None:
